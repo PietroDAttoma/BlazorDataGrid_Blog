@@ -1,0 +1,1010 @@
+﻿@page "/"
+@page "/blogs"
+@using BlazorDataGrid.UoW
+@using Microsoft.EntityFrameworkCore
+@using BlazorDataGrid.Models
+@using BlazorDataGrid.Data
+@using System.Collections.ObjectModel
+@inject IUnitOfWork UnitOfWork
+@inject NotificationService NotificationService
+@inject NavigationManager Navigation
+
+<PageTitle>Blogs & Posts</PageTitle>
+
+<RadzenRow>
+    <!-- Colonna Blogs -->
+    <RadzenColumn Size="6" Order="1">
+        <RadzenCard Style="margin:1px; padding:10px;">
+            <!-- Header Blogs -->
+            <div class="d-flex justify-content-between align-items-center mb-2">
+
+                <h5 class="mb-0">
+                    Blogs
+
+                    @if (string.IsNullOrWhiteSpace(originalBlogNameValue))
+                    {
+                        <!-- ✅ Mostro i badge solo se originalNameValue NON è valorizzato -->
+                        <span class="badge bg-info shadow text-dark ms-1">@ConcurrencyBlogStrategyShort</span>
+                        <span class="badge bg-info shadow text-dark ms-1">@DeleteBlogStrategyShort</span>
+                    }
+                    else
+                    {
+                        <!-- ✅ Se invece originalNameValue è valorizzato, mostro solo lui -->
+                        <span class="badge bg-warning bg-opacity-25 text-dark ms-2">
+                            @originalBlogNameValue
+                        </span>
+                    }
+                </h5>
+
+                <div class="d-flex align-items-center">
+
+                    <RadzenDropDown @bind-Value="SelectedBlogStrategy"
+                                    Data="@(Enum.GetValues(typeof(ConcurrencyStrategy)))"
+                                    TValue="ConcurrencyStrategy"
+                                    Style="width:140px; margin-right:10px"
+                                    Change="@OnStrategyChanged" />
+
+                    <RadzenDropDown @bind-Value="SelectedBlogDeleteStrategy"
+                                    Data="@(Enum.GetValues(typeof(DeleteStrategy)))"
+                                    TValue="DeleteStrategy"
+                                    Style="width:140px; margin-right:10px"
+                                    Change="@OnDeleteStrategyChanged" />
+
+                    <RadzenButton ButtonStyle="ButtonStyle.Success"
+                                  Icon="add_circle"
+                                  Text="New Blog"
+                                  Click="@InsertBlogAsync" />
+
+                    <!-- 👇 Nuovo pulsante per aprire il Cestino -->
+                    <RadzenButton ButtonStyle="ButtonStyle.Warning"
+                                  Icon="backup"
+                                  Click="@GoToBlogTrash"
+                                  Style="margin-left:10px" />
+
+                </div>
+            </div>
+
+            <!-- Griglia Blogs -->
+            <RadzenDataGrid TItem="Blog" Data="@blogs" @ref="blogsGrid"
+                            AllowFiltering="true"
+                            AllowPaging="true" PageSize="5"
+                            AllowSorting="true" EditMode="@editBlogMode"
+                            RowUpdate="@OnUpdateBlogAsync"
+                            RowCreate="@OnCreateBlogAsync"
+                            RowSelect="@OnSelectBlog"
+                            RowRender="@OnRowBlogRender"
+                            ColumnWidth="200px"
+                            Style="height: calc(108vh - 220px)">
+
+                <Columns>
+                    <RadzenDataGridColumn Property="@nameof(Blog.BlogId)" Title="ID" Width="20%" Frozen="false" />
+
+                    <RadzenDataGridColumn Property="@nameof(Blog.Name)" Title="Name" Width="40%">
+                        <EditTemplate Context="blog">
+                            <RadzenTextBox @bind-Value="blog.Name"
+                                           Style="width:150px; display:block"
+                                           Name="Name" aria-label="Enter Name" />
+                            <RadzenRequiredValidator Text="Name is required" Component="Name" Popup="true" />
+                        </EditTemplate>
+                    </RadzenDataGridColumn>
+
+                    <RadzenDataGridColumn Property="@nameof(Blog.CreatedAt)" Title="Created At" Width="30%">
+                        <Template Context="blog">
+                            @blog.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")
+                        </Template>
+                    </RadzenDataGridColumn>
+
+                    <RadzenDataGridColumn Context="blog"
+                                          Title="Actions"
+                                          Filterable="false"
+                                          Sortable="false"
+                                          TextAlign="TextAlign.Center"
+                                          Width="115px">
+                        <HeaderTemplate>
+                            <span class="rz-text-bold">Actions</span>
+                        </HeaderTemplate>
+
+                        <Template Context="blog">
+                            <div class="rz-button-group">
+                                <RadzenButton Icon="edit"
+                                              ButtonStyle="ButtonStyle.Light"
+                                              Size="ButtonSize.Small"
+                                              Tooltip="Modifica"
+                                              Click="@(args => EditBlogAsync(blog))"
+                                              aria-label="Modifica blog"
+                                              @onclick:stopPropagation="true" />
+
+                                <RadzenButton Icon="delete"
+                                              ButtonStyle="ButtonStyle.Danger"
+                                              Size="ButtonSize.Small"
+                                              Tooltip="Elimina"
+                                              Click="@(args => DeleteBlogAsync(blog))"
+                                              aria-label="Elimina blog"
+                                              @onclick:stopPropagation="true" />
+                            </div>
+                        </Template>
+
+                        <EditTemplate Context="blog">
+                            <div class="rz-button-group">
+                                <RadzenButton Icon="check"
+                                              ButtonStyle="ButtonStyle.Success"
+                                              Size="ButtonSize.Small"
+                                              Tooltip="Salva"
+                                              Click="@((args) => SaveBlogAsync(blog))"
+                                              aria-label="Salva modifiche"
+                                              @onclick:stopPropagation="true" />
+
+                                <RadzenButton Icon="close"
+                                              ButtonStyle="ButtonStyle.Light"
+                                              Size="ButtonSize.Small"
+                                              Tooltip="Annulla"
+                                              Click="@((args) => CancelEditBlog(blog))"
+                                              aria-label="Annulla modifica"
+                                              @onclick:stopPropagation="true" />
+
+                                <RadzenButton Icon="delete"
+                                              ButtonStyle="ButtonStyle.Danger"
+                                              Size="ButtonSize.Small"
+                                              Tooltip="Elimina"
+                                              Click="@(args => DeleteBlogAsync(blog))"
+                                              aria-label="Elimina blog"
+                                              @onclick:stopPropagation="true" />
+                            </div>
+                        </EditTemplate>
+                    </RadzenDataGridColumn>
+
+
+                </Columns>
+            </RadzenDataGrid>
+
+        </RadzenCard>
+    </RadzenColumn>
+    
+</RadzenRow>
+
+@code {
+
+    private RadzenDataGrid<Blog> blogsGrid;
+    private ObservableCollection<Blog> blogs = new();
+
+    private Blog? selectedBlog;
+    private Blog? duplicateBlog;
+
+    private bool attemptedSave = false;
+
+    private DataGridEditMode editBlogMode = DataGridEditMode.Single;
+
+    private string? originalBlogNameValue;
+
+    // Default = StoreWins (prevalgono i dati del DB)
+    private ConcurrencyStrategy SelectedBlogStrategy = ConcurrencyStrategy.StoreWins;
+
+    //Strategia di default -> SoftDelete
+    private DeleteStrategy SelectedBlogDeleteStrategy = DeleteStrategy.SoftDelete;
+
+    public enum ConcurrencyStrategy
+    {
+        StoreWins,   // strategia: prevalgono i dati persistiti nel DB
+        ClientWins   // strategia: prevalgono i dati locali (in memoria/UI)
+    }
+
+    public enum DeleteStrategy
+    {
+        HardDelete,  // eliminazione fisica dal DB
+        SoftDelete   // eliminazione logica (flag IsDeleted, ecc.)
+    }
+
+    // proprietà calcolata: restituisce abbreviazione della strategia di concorrenza selezionata
+    private string ConcurrencyBlogStrategyShort =>
+        SelectedBlogStrategy switch
+        {
+            ConcurrencyStrategy.StoreWins => "SW", // mapping diretto
+            ConcurrencyStrategy.ClientWins => "CW", // mapping diretto
+            _ => SelectedBlogStrategy.ToString()    // fallback: nome enum come stringa
+        };
+
+    // proprietà calcolata: restituisce abbreviazione della strategia di delete selezionata
+    private string DeleteBlogStrategyShort =>
+        SelectedBlogDeleteStrategy switch
+        {
+            DeleteStrategy.HardDelete => "HD", // mapping diretto
+            DeleteStrategy.SoftDelete => "SD", // mapping diretto
+            _ => SelectedBlogDeleteStrategy.ToString() // fallback: nome enum come stringa
+        };
+
+    private void OnStrategyChanged(object value)
+    {
+        // cast esplicito da object → ConcurrencyStrategy (assume binding da Radzen o UI event)
+        var strategy = (ConcurrencyStrategy)value;
+
+        // notifica Radzen: mostra messaggio informativo all'utente
+        NotificationService.Notify(new NotificationMessage
+        {
+            Severity = NotificationSeverity.Info, // livello: informativo
+            Summary = "Strategia aggiornata",     // titolo breve
+            Detail = $"Hai selezionato la strategia '{strategy}'.", // dettaglio dinamico con enum
+            Duration = 900                        // durata in ms (~0.9s)
+        });
+    }
+
+    private void OnDeleteStrategyChanged(object value)
+    {
+        // cast esplicito da object → DeleteStrategy (binding da Radzen o evento UI)
+        var strategy = (DeleteStrategy)value;
+
+        // notifica Radzen: feedback immediato all'utente sulla strategia scelta
+        NotificationService.Notify(new NotificationMessage
+        {
+            Severity = NotificationSeverity.Info, // livello: informativo
+            Summary = "Strategia eliminazione aggiornata", // titolo breve
+            Detail = $"Hai selezionato la strategia '{strategy}'.", // dettaglio dinamico con enum
+            Duration = 3000 // durata in ms (~3s), più leggibile rispetto al precedente 900
+        });
+    }
+
+    private void GoToBlogTrash()
+    {
+        //
+    }
+
+    private string GetCategoryCss(int? categoryId)
+    {
+        // ritorna CSS "invalid-category" se è stato tentato il salvataggio e categoryId == -1
+        // altrimenti stringa vuota → nessuna classe applicata
+        return attemptedSave && categoryId == -1 ? "invalid-category" : string.Empty;
+    }
+
+    void OnRowBlogRender(RowRenderEventArgs<Blog> args)
+    {
+        // evidenzia la riga se il BlogId coincide con quello duplicato
+        if (args.Data.BlogId == duplicateBlog?.BlogId)
+        {
+            // aggiunge stile inline: bold + bordo rosso + background rosa
+            args.Attributes.Add("style", "font-weight: bold; box-shadow: inset 0 0 0 2px #d32f2f; background-color: #ffe0e0;");
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        // override del lifecycle Blazor: carica i blog all'inizializzazione
+        await LoadBlogsAsync();
+    }
+
+    private async Task LoadBlogsAsync()
+    {
+        // detach di tutte le entità Blog dal DbContext → evita conflitti di tracking
+        // uso di ?. garantisce null-safety se UnitOfWork non è inizializzato
+        UnitOfWork?.Blogs.DetachWhere(b => true);
+
+        // query asincrona: recupera tutti i Blog in modalità AsNoTracking
+        // ordinati per BlogId in ordine decrescente
+        var data = await UnitOfWork!.Blogs.GetAllAsNoTrackingOrderedAsync(
+            b => b.BlogId,
+            descending: true
+        );
+
+        // conversione in ObservableCollection → supporta binding dinamico in UI (Radzen DataGrid, ecc.)
+        blogs = new ObservableCollection<Blog>(data);
+    }
+
+
+    // --- Blog CRUD methods ------------------------------------------------------------------
+
+    private void OnSelectBlog(Blog blog)
+    {
+        // assegna il blog selezionato alla variabile di stato
+        selectedBlog = blog;
+
+        // forza il refresh della UI (Blazor re-render)
+        StateHasChanged();
+    }
+
+    private async Task InsertBlogAsync()
+    {
+        // validazione: se la griglia non è inizializzata o non valida → esce
+        if (blogsGrid is null || !blogsGrid.IsValid) return;
+
+        // inizializza nuovo Blog;
+        var blog = new Blog();
+
+        // inserisce nuova riga nella Radzen DataGrid in modalità edit
+        await blogsGrid.InsertRow(blog);
+    }
+
+    public enum BlogInsertStatus
+    {
+        New,              // Il blog non esiste né localmente né nel database: è davvero nuovo.
+        NewByConcurrency, // Il blog non esiste localmente, ma è già stato inserito nel database da un altro utente.
+        Duplicate,        // Il blog esiste sia localmente che nel database: è un duplicato.
+        Obsolete          // Il blog esiste solo localmente, ma non è più nel database: è obsoleto e va rimosso.
+    }
+
+    public BlogInsertStatus EvaluateBlogStatus(bool localExist, bool dbExists)
+    {
+        // caso: non esiste localmente ma esiste nel DB → creato da concorrenza
+        if (!localExist && dbExists) return BlogInsertStatus.NewByConcurrency;
+
+        // caso: esiste sia localmente che nel DB → duplicato
+        if (localExist && dbExists) return BlogInsertStatus.Duplicate;
+
+        // caso: esiste localmente ma non nel DB → obsoleto
+        if (localExist && !dbExists) return BlogInsertStatus.Obsolete;
+
+        // caso finale: non esiste né localmente né nel DB → nuovo
+        return BlogInsertStatus.New;
+    }
+
+    private async Task OnCreateBlogAsync(Blog blog)
+    {
+        try
+        {
+            // verifica duplicati: presenza locale e nel DB
+            bool localExist = blogs.Any(b => string.Equals(b.Name, blog.Name, StringComparison.OrdinalIgnoreCase));
+            bool dbExists = await UnitOfWork!.Blogs.ExistsAsync(b => b.Name == blog.Name && !b.IsDeleted);
+
+            // calcola stato inserimento
+            var status = EvaluateBlogStatus(localExist, dbExists);
+
+            switch (status)
+            {
+                case BlogInsertStatus.Duplicate:
+                    {
+                        // recupera dal DB il blog duplicato con Category inclusa
+                        var existingBlog = await UnitOfWork.Blogs
+                            .GetByFilterAsNoTrackingAsync(b => b.Name == blog.Name && !b.IsDeleted);
+
+                        if (existingBlog is not null)
+                        {
+                            // rimuove eventuale versione locale obsoleta
+                            var local = blogs.FirstOrDefault(b => b.BlogId == existingBlog.BlogId);
+                            if (local is not null) blogs.Remove(local);
+
+                            // inserisce il blog aggiornato in posizione ordinata (decrescente per BlogId)
+                            int insertIndex = blogs.TakeWhile(b => b.BlogId > existingBlog.BlogId).Count();
+                            blogs.Insert(insertIndex, existingBlog);
+
+                            // notifica duplicato
+                            NotificationService.Notify(new NotificationMessage
+                            {
+                                Severity = NotificationSeverity.Warning,
+                                Summary = "Duplicato",
+                                Detail = $"Esiste già un blog attivo con nome '{blog.Name}'.",
+                                Duration = 4000
+                            });
+
+                            // cancella riga in inserimento e rimuove blog locale
+                            blogsGrid.CancelEditRow(blog);
+                            blogs.Remove(blog);
+
+                            // calcola pagina del duplicato e forza refresh Radzen (workaround doppio GoToPage)
+                            int pageIndex = blogs.IndexOf(existingBlog) / blogsGrid.PageSize;
+                            await blogsGrid.GoToPage(pageIndex);
+                            await blogsGrid.GoToPage(pageIndex);
+
+                            // seleziona ed evidenzia duplicato
+                            duplicateBlog = existingBlog;
+                            await blogsGrid.SelectRow(existingBlog);
+                            OnSelectBlog(existingBlog);
+
+                            // rimuove evidenziazione dopo 3s
+                            _ = Task.Run(async () =>
+                            {
+                                await Task.Delay(3000);
+                                duplicateBlog = null;
+                                await InvokeAsync(StateHasChanged);
+                            });
+                        }
+                        return;
+                    }
+
+                case BlogInsertStatus.Obsolete:
+                    {
+                        // rimuove tutte le versioni obsolete locali
+                        foreach (var duplicate in blogs.Where(b => string.Equals(b.Name, blog.Name, StringComparison.OrdinalIgnoreCase)).ToList())
+                            blogs.Remove(duplicate);
+
+                        // notifica obsolescenza
+                        NotificationService.Notify(new NotificationMessage
+                        {
+                            Severity = NotificationSeverity.Warning,
+                            Summary = "Blog obsoleto",
+                            Detail = $"Il blog '{blog.Name}' non esiste più nel database e quindi è stato rimosso.",
+                            Duration = 4000
+                        });
+                        break;
+                    }
+
+                case BlogInsertStatus.NewByConcurrency:
+                    {
+                        // recupera blog inserito da altri utenti
+                        var existingBlog = await UnitOfWork.Blogs
+                            .GetByFilterAsNoTrackingAsync(b => b.Name == blog.Name && !b.IsDeleted);
+
+                        if (existingBlog is not null && !blogs.Any(b => b.BlogId == existingBlog.BlogId))
+                        {
+                            int insertIndex = blogs.TakeWhile(b => b.BlogId > existingBlog.BlogId).Count();
+                            blogs.Insert(insertIndex, existingBlog);
+                        }
+
+                        // cancella riga in inserimento
+                        blogsGrid.CancelEditRow(blog);
+                        blogs.Remove(blog);
+
+                        // notifica concorrenza
+                        NotificationService.Notify(new NotificationMessage
+                        {
+                            Severity = NotificationSeverity.Warning,
+                            Summary = "Operazione riuscita",
+                            Detail = $"Blog '{blog.Name}' già inserito da altro utente.",
+                            Duration = 3000
+                        });
+                        return;
+                    }
+
+                case BlogInsertStatus.New:
+                    {
+                        // inserisce nuovo blog nel DB
+                        await UnitOfWork.Blogs.AddAsync(blog);
+                        await UnitOfWork.SaveAsync();
+
+                        // ricarica blog con Category inclusa (no tracking)
+                        var savedBlog = await UnitOfWork.Blogs
+                            .GetByIdWithIncludesAsNoTrackingAsync(blog.BlogId);
+
+                        if (savedBlog is not null)
+                        {
+                            // inserisce localmente se non già presente
+                            if (!blogs.Any(b => b.BlogId == savedBlog.BlogId))
+                            {
+                                int insertIndex = blogs.TakeWhile(b => b.BlogId > savedBlog.BlogId).Count();
+                                blogs.Insert(insertIndex, savedBlog);
+                            }
+
+                            // notifica successo
+                            NotificationService.Notify(new NotificationMessage
+                            {
+                                Severity = NotificationSeverity.Success,
+                                Summary = "Operazione riuscita",
+                                Detail = $"Blog '{savedBlog.Name}' inserito con successo.",
+                                Duration = 3000
+                            });
+                        }
+                        break;
+                    }
+
+                default:
+                    throw new InvalidOperationException("Stato di inserimento non gestito.");
+            }
+        }
+        catch (DbUpdateException dbEx)
+        {
+            // gestione errori DB (vincoli, salvataggio)
+            NotificationService.Notify(new NotificationMessage
+            {
+                Severity = NotificationSeverity.Error,
+                Summary = "Errore database",
+                Detail = $"Errore durante il salvataggio: {dbEx.Message}",
+                Duration = 10000
+            });
+            blogsGrid.CancelEditRow(blog);
+            blogs.Remove(blog);
+        }
+        catch (Exception ex)
+        {
+            // gestione errori generici
+            NotificationService.Notify(new NotificationMessage
+            {
+                Severity = NotificationSeverity.Error,
+                Summary = "Errore",
+                Detail = $"Errore inserimento: {ex.Message}",
+                Duration = 10000
+            });
+            blogsGrid.CancelEditRow(blog);
+            blogs.Remove(blog);
+        }
+        finally
+        {
+            // detach entità tracciate e refresh UI
+            UnitOfWork?.Blogs.DetachWhere(b => true);
+            //UnitOfWork?.Categories.DetachWhere(c => true);
+            StateHasChanged();
+        }
+    }
+
+    private async Task EditBlogAsync(Blog blog)
+    {
+        // validazione: se griglia non inizializzata, non valida o blog nullo → esce
+        if (blogsGrid is null || !blogsGrid.IsValid || blog == null) return;
+
+        // ricarica RowVersion se mancante → necessario per gestire concorrenza ottimistica
+        if (blog.RowVersion == null || blog.RowVersion.Length == 0)
+        {
+            var fresh = await UnitOfWork!.Blogs.GetByIdAsNoTrackingAsync(blog.BlogId);
+            if (fresh != null)
+            {
+                // aggiorna RowVersion del blog e imposta valore originale per EF Core
+                blog.RowVersion = fresh.RowVersion;
+                UnitOfWork.Blogs.SetOriginalRowVersion(blog, fresh.RowVersion);
+            }
+        }
+
+        // recupera entry EF Core per tracciare valori originali
+        var entry = UnitOfWork!.Blogs.GetEntry(blog);
+        originalBlogNameValue = entry.Property(nameof(Blog.Name)).OriginalValue?.ToString();
+
+        // avvia modalità edit sulla riga corrispondente nella Radzen DataGrid
+        await blogsGrid.EditRow(blog);
+    }
+
+    private async Task OnUpdateBlogAsync(Blog blog)
+    {
+        try
+        {
+            // verifica duplicato logico: esiste altro blog attivo con stesso nome?
+            bool isDuplicate = await UnitOfWork!.Blogs.ExistsAsync(b =>
+                b.BlogId != blog.BlogId && b.Name == blog.Name && !b.IsDeleted);
+
+            if (isDuplicate)
+            {
+                // notifica duplicato e riapre riga in edit
+                NotificationService.Notify(new NotificationMessage
+                {
+                    Severity = NotificationSeverity.Warning,
+                    Summary = "Duplicato",
+                    Detail = $"Esiste già un altro blog attivo con nome '{blog.Name}'.",
+                    Duration = 4000
+                });
+                await blogsGrid.EditRow(blog);
+                return;
+            }
+
+            // aggiorna entità nel contesto EF Core
+            UnitOfWork.Blogs.Update(blog);
+            UnitOfWork.Blogs.SetOriginalRowVersion(blog, blog.RowVersion);
+            await UnitOfWork.SaveAsync();
+
+            // notifica successo
+            NotificationService.Notify(new NotificationMessage
+            {
+                Severity = NotificationSeverity.Success,
+                Summary = "Aggiornato",
+                Detail = $"Blog '{blog.Name}' aggiornato con successo.",
+                Duration = 3000
+            });
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // gestione conflitto concorrenza
+            UnitOfWork.Blogs.Detach(blog);
+
+            var databaseEntity = await UnitOfWork.Blogs
+                .GetByIdWithIncludesAsNoTrackingAsync(blog.BlogId);
+
+            if (databaseEntity == null)
+            {
+                // caso: eliminato da altro utente
+                blogs.Remove(blog);
+                UnitOfWork.Blogs.ClearRowVersion(blog);
+
+                NotificationService.Notify(new NotificationMessage
+                {
+                    Severity = NotificationSeverity.Error,
+                    Summary = "Conflitto di concorrenza",
+                    Detail = "Il blog è stato eliminato da un altro utente.",
+                    Duration = 4000
+                });
+            }
+            else
+            {
+                switch (SelectedBlogStrategy)
+                {
+                    case ConcurrencyStrategy.StoreWins:
+                        // prevalgono dati DB
+                        UnitOfWork.Blogs.ApplyValues(blog, databaseEntity);
+                        blog.RowVersion = databaseEntity.RowVersion;
+                        UnitOfWork.Blogs.SetOriginalRowVersion(blog, blog.RowVersion);
+
+                        NotificationService.Notify(new NotificationMessage
+                        {
+                            Severity = NotificationSeverity.Warning,
+                            Summary = "Conflitto di concorrenza",
+                            Detail = "Il blog è stato modificato da un altro utente. Ho ricaricato i dati aggiornati.",
+                            Duration = 4000
+                        });
+                        break;
+
+                    case ConcurrencyStrategy.ClientWins:
+                        // prevalgono dati locali
+                        UnitOfWork.Blogs.Detach(databaseEntity);
+                        UnitOfWork.Blogs.Update(blog);
+                        UnitOfWork.Blogs.SetOriginalRowVersion(blog, databaseEntity.RowVersion);
+
+                        try
+                        {
+                            await UnitOfWork.SaveAsync();
+
+                            NotificationService.Notify(new NotificationMessage
+                            {
+                                Severity = NotificationSeverity.Info,
+                                Summary = "Forzato",
+                                Detail = "Le modifiche locali sono state mantenute e salvate ignorando quelle di un altro utente.",
+                                Duration = 4000
+                            });
+                        }
+                        catch (DbUpdateConcurrencyException)
+                        {
+                            // ulteriore conflitto durante salvataggio
+                            NotificationService.Notify(new NotificationMessage
+                            {
+                                Severity = NotificationSeverity.Error,
+                                Summary = "Conflitto di concorrenza",
+                                Detail = "Un altro utente ha modificato il record mentre stavi salvando. Le modifiche non sono state applicate.",
+                                Duration = 5000
+                            });
+
+                            var fresh = await UnitOfWork.Blogs
+                                .GetByIdWithIncludesAsNoTrackingAsync(blog.BlogId);
+
+                            if (fresh != null)
+                            {
+                                UnitOfWork.Blogs.ApplyValues(blog, fresh);
+                                blog.RowVersion = fresh.RowVersion;
+                                UnitOfWork.Blogs.SetOriginalRowVersion(blog, fresh.RowVersion);
+                            }
+                        }
+                        break;
+
+                    default:
+                        // strategia non gestita
+                        NotificationService.Notify(new NotificationMessage
+                        {
+                            Severity = NotificationSeverity.Warning,
+                            Summary = "Strategia non gestita",
+                            Detail = $"La strategia '{SelectedBlogStrategy}' non è implementata.",
+                            Duration = 4000
+                        });
+                        break;
+                }
+            }
+        }
+        catch (DbUpdateException ex)
+        {
+            // errori DB generici
+            NotificationService.Notify(new NotificationMessage
+            {
+                Severity = NotificationSeverity.Error,
+                Summary = "Errore",
+                Detail = $"Errore durante l'aggiornamento: {ex.Message}",
+                Duration = 4000
+            });
+        }
+        catch (Exception ex)
+        {
+            // errori imprevisti
+            NotificationService.Notify(new NotificationMessage
+            {
+                Severity = NotificationSeverity.Error,
+                Summary = "Errore imprevisto",
+                Detail = $"Si è verificato un errore inatteso: {ex.Message}",
+                Duration = 10000
+            });
+        }
+        finally
+        {
+            // reset stato locale e refresh UI
+            originalBlogNameValue = null;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SaveBlogAsync(Blog blog)
+    {
+        // flag: indica che è stato tentato un salvataggio (usato per validazioni CSS/UI)
+        attemptedSave = true;
+
+        // aggiorna la riga nella Radzen DataGrid → trigger di validazione e commit
+        await blogsGrid.UpdateRow(blog);
+
+        // reset flag se salvataggio completato senza eccezioni
+        attemptedSave = false;
+    }
+
+    private async Task CancelEditBlog(Blog blog)
+    {
+        try
+        {
+            // reset flag di validazione visiva
+            attemptedSave = false;
+
+            // caso speciale: riga in inserimento (BlogId == 0 → non salvata)
+            if (blog.BlogId == 0)
+            {
+                blogsGrid.CancelEditRow(blog); // annulla edit
+                blogs.Remove(blog);            // rimuove dalla collezione locale
+                originalBlogNameValue = null;  // reset badge visivo
+
+                // notifica annullamento inserimento
+                NotificationService.Notify(new NotificationMessage
+                {
+                    Severity = NotificationSeverity.Info,
+                    Summary = "Annullato",
+                    Detail = "L'inserimento del nuovo blog è stato annullato.",
+                    Duration = 3000
+                });
+                return;
+            }
+
+            // annulla edit su riga esistente
+            blogsGrid.CancelEditRow(blog);
+            originalBlogNameValue = null;
+
+            // ricarica versione più recente dal DB (no tracking)
+            var original = await UnitOfWork!.Blogs
+                .GetByIdWithIncludesAsNoTrackingAsync(blog.BlogId);
+
+            // caso 1: eliminato da altro utente
+            if (original == null)
+            {
+                blogs.Remove(blog);
+                UnitOfWork.Blogs.Detach(blog);
+                UnitOfWork.Blogs.ClearRowVersion(blog);
+
+                NotificationService.Notify(new NotificationMessage
+                {
+                    Severity = NotificationSeverity.Error,
+                    Summary = "Conflitto di concorrenza",
+                    Detail = "Il blog è stato eliminato da un altro utente.",
+                    Duration = 4000
+                });
+                return;
+            }
+
+            // caso 2: modificato da altri (RowVersion diversa)
+            if (!blog.RowVersion.SequenceEqual(original.RowVersion))
+            {
+                switch (SelectedBlogStrategy)
+                {
+                    case ConcurrencyStrategy.StoreWins:
+                        // prevalgono dati DB
+                        UnitOfWork.Blogs.ApplyValues(blog, original);
+                        blog.RowVersion = original.RowVersion;
+                        UnitOfWork.Blogs.SetOriginalRowVersion(blog, original.RowVersion);
+
+                        NotificationService.Notify(new NotificationMessage
+                        {
+                            Severity = NotificationSeverity.Warning,
+                            Summary = "Conflitto di concorrenza",
+                            Detail = "Il blog è stato modificato da un altro utente. Ho ricaricato i dati aggiornati.",
+                            Duration = 4000
+                        });
+                        break;
+
+                    case ConcurrencyStrategy.ClientWins:
+                        // prevalgono dati locali
+                        UnitOfWork.Blogs.Update(blog);
+                        UnitOfWork.Blogs.SetOriginalRowVersion(blog, original.RowVersion);
+
+                        try
+                        {
+                            await UnitOfWork.SaveAsync();
+
+                            NotificationService.Notify(new NotificationMessage
+                            {
+                                Severity = NotificationSeverity.Info,
+                                Summary = "Forzato",
+                                Detail = "Le modifiche locali sono state mantenute e salvate ignorando quelle di un altro utente.",
+                                Duration = 4000
+                            });
+                        }
+                        catch (DbUpdateConcurrencyException)
+                        {
+                            // ulteriore conflitto durante salvataggio
+                            NotificationService.Notify(new NotificationMessage
+                            {
+                                Severity = NotificationSeverity.Error,
+                                Summary = "Conflitto di concorrenza",
+                                Detail = "Un altro utente ha modificato il record mentre stavi salvando. Le modifiche non sono state applicate.",
+                                Duration = 5000
+                            });
+
+                            var fresh = await UnitOfWork.Blogs
+                                .GetByIdWithIncludesAsNoTrackingAsync(blog.BlogId);
+
+                            if (fresh != null)
+                            {
+                                UnitOfWork.Blogs.ApplyValues(blog, fresh);
+                                blog.RowVersion = fresh.RowVersion;
+                                UnitOfWork.Blogs.SetOriginalRowVersion(blog, fresh.RowVersion);
+                            }
+                        }
+                        break;
+                }
+            }
+            else
+            {
+                // caso 3: nessuna modifica concorrente → ripristina valori originali
+                UnitOfWork.Blogs.ApplyValues(blog, original);
+                blog.RowVersion = original.RowVersion;
+                UnitOfWork.Blogs.SetOriginalRowVersion(blog, original.RowVersion);
+
+                NotificationService.Notify(new NotificationMessage
+                {
+                    Severity = NotificationSeverity.Success,
+                    Summary = "Operazione riuscita",
+                    Detail = $"Blog '{blog.Name}' ripristinato con successo.",
+                    Duration = 3000
+                });
+            }
+        }
+        catch (DbUpdateException ex)
+        {
+            // errori DB
+            NotificationService.Notify(new NotificationMessage
+            {
+                Severity = NotificationSeverity.Error,
+                Summary = "Errore",
+                Detail = $"Errore durante l'annullamento: {ex.Message}",
+                Duration = 4000
+            });
+        }
+        catch (Exception ex)
+        {
+            // errori imprevisti
+            NotificationService.Notify(new NotificationMessage
+            {
+                Severity = NotificationSeverity.Error,
+                Summary = "Errore imprevisto",
+                Detail = $"Si è verificato un errore inatteso: {ex.Message}",
+                Duration = 10000
+            });
+        }
+        finally
+        {
+            // refresh UI
+            StateHasChanged();
+        }
+    }
+
+    private async Task DeleteBlogAsync(Blog blog)
+    {
+        try
+        {
+            switch (SelectedBlogDeleteStrategy)
+            {
+                case DeleteStrategy.HardDelete:
+                    {
+                        // stacca l'entità dal contesto per evitare conflitti di tracking
+                        UnitOfWork.Blogs.Detach(blog);
+
+                        // hard delete → elimina fisicamente il record dal DB
+                        UnitOfWork.Blogs.Delete(blog);
+                        break;
+                    }
+
+                case DeleteStrategy.SoftDelete:
+                    // stacca l'entità dal contesto per evitare conflitti di stato
+                    UnitOfWork.Blogs.Detach(blog);
+
+                    // soft delete → marca il record come eliminato (flag IsDeleted)
+                    UnitOfWork.Blogs.SoftDelete(blog);
+                    break;
+            }
+
+            // salva modifiche nel DB
+            await UnitOfWork.SaveAsync();
+
+            // aggiorna lista locale rimuovendo il blog
+            blogs = new ObservableCollection<Blog>(blogs.Where(b => b.BlogId != blog.BlogId));
+
+            // se era selezionato, resetta selezione
+            if (selectedBlog?.BlogId == blog.BlogId)
+                selectedBlog = null;
+
+            // notifica successo
+            NotificationService.Notify(new NotificationMessage
+            {
+                Severity = NotificationSeverity.Success,
+                Summary = "Operazione riuscita",
+                Detail = SelectedBlogDeleteStrategy == DeleteStrategy.HardDelete
+                    ? $"Blog '{blog.Name}' eliminato definitivamente."
+                    : $"Blog '{blog.Name}' spostato nel cestino (Soft Delete).",
+                Duration = 3000
+            });
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // gestione conflitti di concorrenza
+            UnitOfWork.Blogs.Detach(blog);
+
+            var databaseBlog = await UnitOfWork.Blogs
+                .GetByIdWithIncludesAsNoTrackingAsync(blog.BlogId);
+
+            if (databaseBlog == null)
+            {
+                // caso: già eliminato da altro utente
+                blogs = new ObservableCollection<Blog>(blogs.Where(b => b.BlogId != blog.BlogId));
+                UnitOfWork.Blogs.ClearRowVersion(blog);
+
+                NotificationService.Notify(new NotificationMessage
+                {
+                    Severity = NotificationSeverity.Warning,
+                    Summary = "Conflitto di concorrenza",
+                    Detail = "Il blog è già stato eliminato da un altro utente.",
+                    Duration = 4000
+                });
+            }
+            else
+            {
+                // caso: modificato da altro utente
+                switch (SelectedBlogStrategy)
+                {
+                    case ConcurrencyStrategy.StoreWins:
+                        // prevalgono dati DB → aggiorna lista con versione fresca
+                        var index = blogs.IndexOf(blog);
+                        if (index >= 0) blogs[index] = databaseBlog;
+
+                        NotificationService.Notify(new NotificationMessage
+                        {
+                            Severity = NotificationSeverity.Info,
+                            Summary = "Conflitto di concorrenza",
+                            Detail = "Il blog è stato modificato da un altro utente e non può essere eliminato senza prima aggiornare i dati.",
+                            Duration = 4000
+                        });
+                        break;
+
+                    case ConcurrencyStrategy.ClientWins:
+                        // prevalgono dati locali → forza eliminazione ignorando RowVersion
+                        UnitOfWork.Blogs.Detach(databaseBlog);
+                        UnitOfWork.Blogs.SetOriginalRowVersion(blog, databaseBlog.RowVersion);
+
+                        if (SelectedBlogDeleteStrategy == DeleteStrategy.HardDelete)
+                            UnitOfWork.Blogs.Delete(blog);
+                        else
+                            UnitOfWork.Blogs.SoftDelete(blog);
+
+                        await UnitOfWork.SaveAsync();
+
+                        blogs = new ObservableCollection<Blog>(blogs.Where(b => b.BlogId != blog.BlogId));
+
+                        NotificationService.Notify(new NotificationMessage
+                        {
+                            Severity = NotificationSeverity.Info,
+                            Summary = "Forzato",
+                            Detail = SelectedBlogDeleteStrategy == DeleteStrategy.HardDelete
+                                ? "Il blog è stato eliminato ignorando le modifiche di un altro utente."
+                                : "Il blog è stato spostato nel cestino ignorando le modifiche di un altro utente.",
+                            Duration = 4000
+                        });
+                        break;
+                }
+            }
+        }
+        catch (DbUpdateException ex)
+        {
+            // errori DB (vincoli, salvataggio)
+            NotificationService.Notify(new NotificationMessage
+            {
+                Severity = NotificationSeverity.Error,
+                Summary = "Errore",
+                Detail = $"Errore eliminazione: {ex.Message}",
+                Duration = 4000
+            });
+        }
+        catch (Exception ex)
+        {
+            // errori imprevisti
+            NotificationService.Notify(new NotificationMessage
+            {
+                Severity = NotificationSeverity.Error,
+                Summary = "Errore imprevisto",
+                Detail = $"Si è verificato un errore inatteso: {ex.Message}",
+                Duration = 10000
+            });
+        }
+        finally
+        {
+            // refresh UI
+            StateHasChanged();
+        }
+    }
+}
