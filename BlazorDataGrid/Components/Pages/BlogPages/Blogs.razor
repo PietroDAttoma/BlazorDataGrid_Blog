@@ -258,9 +258,14 @@
         // evidenzia la riga se il BlogId coincide con quello duplicato
         if (args.Data.BlogId == duplicateBlog?.BlogId)
         {
-            // aggiunge stile inline: bold + bordo rosso + background rosa
-            args.Attributes.Add("style", "font-weight: bold; box-shadow: inset 0 0 0 2px #d32f2f; background-color: #ffe0e0;");
+            args.Attributes.Add("style",
+                "font-weight: bold; box-shadow: inset 0 0 0 2px #d32f2f; background-color: #ffe0e0;");
         }
+
+        // ✅ doppio click → inline edit della riga
+        args.Attributes["ondblclick"] = EventCallback.Factory.Create<MouseEventArgs>(
+            this, async (MouseEventArgs e) => await blogsGrid.EditRow(args.Data)
+        );
     }
 
     protected override async Task OnInitializedAsync()
